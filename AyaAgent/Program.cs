@@ -2,10 +2,17 @@
 using Discord.Commands;
 using Discord.WebSocket;
 using System;
+using System.IO;
+using System.Text.Json;
 using System.Threading.Tasks;
 
 namespace AyaAgent
 {
+    public class Config
+    {
+        public string Token { get; set; }
+    }
+
     class Program
     {
         DiscordSocketClient client; //봇 클라이언트
@@ -19,6 +26,9 @@ namespace AyaAgent
         //봇의 진입점, 봇의 거의 모든 작업이 비동기로 작동되기 때문에 비동기 함수로 생성해야 함.
         public async Task BotMain()
         {
+            var configJson = File.ReadAllText("config.json");
+            var config = JsonSerializer.Deserialize<Config>(configJson);
+
             client = new DiscordSocketClient(new DiscordSocketConfig()
             {
                 LogLevel = LogSeverity.Verbose //봇의 로그 레벨 설정
@@ -33,7 +43,7 @@ namespace AyaAgent
             client.Log += OnClientLogReceived;
             commands.Log += OnClientLogReceived;
 
-            await client.LoginAsync(TokenType.Bot, "Bot Token"); //봇 토큰 사용해 서버에 로그인
+            await client.LoginAsync(TokenType.Bot, config.Token); //봇 토큰 사용해 서버에 로그인
             await client.StartAsync(); //봇이 이벤트를 수신하기 시작
 
             client.MessageReceived += OnClientMessage; //봇이 메시지를 수신할 때 처리하도록 설정
