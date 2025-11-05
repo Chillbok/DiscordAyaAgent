@@ -5,6 +5,7 @@ using System;
 using System.IO;
 using System.Text.Json;
 using System.Threading.Tasks;
+using System.Reflection;
 
 namespace AyaAgent
 {
@@ -43,6 +44,9 @@ namespace AyaAgent
             client.Log += OnClientLogReceived;
             commands.Log += OnClientLogReceived;
 
+            //프로젝트에 있는 모든 명령어 모듈 등록
+            await commands.AddModulesAsync(Assembly.GetEntryAssembly(), null);
+
             await client.LoginAsync(TokenType.Bot, config.Token); //봇 토큰 사용해 서버에 로그인
             await client.StartAsync(); //봇이 이벤트를 수신하기 시작
 
@@ -65,7 +69,18 @@ namespace AyaAgent
                 return;
 
             var context = new SocketCommandContext(client, message); //수신된 메시지에 대한 컨텍스트 생성
-            await context.Channel.SendMessageAsync("명령어 수신됨 - " + message.Content); //수신된 명령어를 다시 보낸다.
+
+            //CommandService에 명령어 실행 요청
+            var result = await commands.ExecuteAsync(
+                context: context,
+                argPos: pos,
+                services: null);
+
+            //명령어 실행이 실패했을 경우(예: 없는 명령어), 오류 출력
+            if (!result.IsSuccess)
+            {
+                Console.WriteLine($"명령어 실행 실패: {result.ErrorReason}");
+            }
         }
 
         // 봇의 로그를 출력하는 함수
