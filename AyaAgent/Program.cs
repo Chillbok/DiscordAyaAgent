@@ -26,7 +26,7 @@ namespace AyaAgent
         //봇의 진입점, 봇의 거의 모든 작업이 비동기로 작동되기 때문에 비동기 함수로 생성해야 함.
         public async Task BotMain()
         {
-            var configJson = File.ReadAllText("config.json");
+            var configJson = File.ReadAllText("userInfo/config.json");
             var config = JsonSerializer.Deserialize<Config>(configJson);
 
             client = new DiscordSocketClient(new DiscordSocketConfig()
