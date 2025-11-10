@@ -1,101 +1,111 @@
-﻿using Discord;
-using Discord.Commands;
+using Discord;
 using Discord.WebSocket;
 using System;
 using System.IO;
 using System.Text.Json;
 using System.Threading.Tasks;
 using System.Reflection;
+using Discord.Interactions;
 
 namespace AyaAgent
 {
     public class Config
     {
-        //빈 문자열(string.Empty)로 초기화
         public string Token { get; set; } = string.Empty;
+        public ulong TestGuildId { get; set; }
     }
 
     class Program
     {
-        private readonly DiscordSocketClient _client; //봇 클라이언트
-        private readonly CommandService _commands; //명령어 수신 클라이언트
+        private readonly DiscordSocketClient _client;
+        private readonly InteractionService _commands;
+        private Config? _config; // 클래스 필드로 설정을 저장합니다.
 
         public Program()
         {
             _client = new DiscordSocketClient(new DiscordSocketConfig()
             {
-                LogLevel = LogSeverity.Verbose, //봇의 로그 레벨 설정
-                GatewayIntents = GatewayIntents.Guilds | GatewayIntents.GuildMessages | GatewayIntents.MessageContent
+                LogLevel = LogSeverity.Verbose,
+                GatewayIntents = GatewayIntents.Guilds | GatewayIntents.GuildMessages
             });
-            _commands = new CommandService(new CommandServiceConfig() //명령어 수신 클라이언트 초기화
+            
+            _commands = new InteractionService(_client.Rest, new InteractionServiceConfig()
             {
-                LogLevel = LogSeverity.Verbose //봇의 로그 레벨 설정
+                LogLevel = LogSeverity.Verbose
             });
         }
         
-        //프로그램의 진입점
         static void Main(string[] args)
         {
-            new Program().BotMain().GetAwaiter().GetResult(); //봇의 진입점 실행
+            new Program().BotMain().GetAwaiter().GetResult();
         }
 
-        //봇의 진입점, 봇의 거의 모든 작업이 비동기로 작동되기 때문에 비동기 함수로 생성해야 함.
         public async Task BotMain()
         {
             var configJson = File.ReadAllText("userInfo/config.json");
-            var config = JsonSerializer.Deserialize<Config>(configJson);
+            _config = JsonSerializer.Deserialize<Config>(configJson); // 설정을 필드에 저장
 
-            if (config == null || string.IsNullOrEmpty(config.Token))
+            if (_config == null || string.IsNullOrEmpty(_config.Token))
             {
-                Console.WriteLine("Error: config.json is invalid or token is missing. Please check the file at userInfo/config.json\n에러: config.json이 유효하지 않거나 토큰이 인식되지 않습니다. userInfo/config.json 파일을 확인해주세요.");
+                Console.WriteLine("Error: config.json is invalid or token is missing.");
+                return;
+            }
+            if (_config.TestGuildId == 0)
+            {
+                Console.WriteLine("Error: TestGuildId is missing in config.json. Please add your test server's ID.");
                 return;
             }
 
-            //로그 수신 시 로그 출력 함수에서 출력되도록 설정
             _client.Log += OnClientLogReceived;
             _commands.Log += OnClientLogReceived;
+            
+            _client.Ready += OnClientReady;
+            _client.InteractionCreated += OnInteractionCreated;
 
-            //프로젝트에 있는 모든 명령어 모듈 등록
-            await _commands.AddModulesAsync(Assembly.GetEntryAssembly(), null);
-            await _client.LoginAsync(TokenType.Bot, config.Token); //봇 토큰 사용해 서버에 로그인
-            await _client.StartAsync(); //봇이 이벤트를 수신하기 시작
-            _client.MessageReceived += OnClientMessage; //봇이 메시지를 수신할 때 처리하도록 설정
-            await Task.Delay(-1); //봇이 종료되지 않도록 블로킹
+            await _client.LoginAsync(TokenType.Bot, _config.Token); // 필드에서 토큰 사용
+            await _client.StartAsync();
+            
+            await Task.Delay(-1);
         }
 
-        private async Task OnClientMessage(SocketMessage arg)
+        private async Task OnClientReady()
         {
-            //수신한 메시지가 사용자가 보낸 게 아닐 때 취소
-            var message = arg as SocketUserMessage;
-            if (message == null) return;
+            // 이제 여기서 파일을 다시 읽을 필요가 없습니다.
+            await _commands.AddModulesAsync(Assembly.GetEntryAssembly(), null);
+            
+            // 필드에서 TestGuildId를 사용합니다.
+            // BotMain에서 null 체크를 통과했으므로, ! (null-forgiving operator)를 사용해 컴파일러에게 null이 아님을 알려줍니다.
+            await _commands.RegisterCommandsToGuildAsync(_config!.TestGuildId);
+            
+            Console.WriteLine("봇이 준비되었습니다. 명령어를 등록했습니다.");
+        }
 
-            int pos = 0;
-
-            //메시지 앞에 !이 달려있지 않고, 자신이 호출된 게 아니거나 다른 봇이 호출했다면 취소
-            if (!(message.HasCharPrefix('!', ref pos) ||
-            message.HasMentionPrefix(_client.CurrentUser, ref pos)) ||
-            message.Author.IsBot)
-                return;
-
-            var context = new SocketCommandContext(_client, message); //수신된 메시지에 대한 컨텍스트 생성
-
-            //CommandService에 명령어 실행 요청
-            var result = await _commands.ExecuteAsync(
-                context: context,
-                argPos: pos,
-                services: null);
-
-            //명령어 실행이 실패했을 경우(예: 없는 명령어), 오류 출력
-            if (!result.IsSuccess)
+        private async Task OnInteractionCreated(SocketInteraction interaction)
+        {
+            try
             {
-                Console.WriteLine($"명령어 실행 실패: {result.ErrorReason}");
+                var context = new SocketInteractionContext(_client, interaction);
+                var result = await _commands.ExecuteCommandAsync(context, null);
+
+                if (!result.IsSuccess)
+                {
+                    Console.WriteLine($"명령어 실행 실패: {result.ErrorReason}");
+                    await interaction.RespondAsync($"오류가 발생했습니다: {result.ErrorReason}", ephemeral: true);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"예외 발생: {ex}");
+                if (interaction.HasResponded)
+                    await interaction.FollowupAsync("처리 중 예기치 않은 오류가 발생했습니다.", ephemeral: true);
+                else
+                    await interaction.RespondAsync("처리 중 예기치 않은 오류가 발생했습니다.", ephemeral: true);
             }
         }
 
-        // 봇의 로그를 출력하는 함수
         private Task OnClientLogReceived(LogMessage msg)
         {
-            Console.WriteLine(msg.ToString()); //로그 출력
+            Console.WriteLine(msg.ToString());
             return Task.CompletedTask;
         }
     }
